@@ -11,6 +11,7 @@ import numpy as np
 import shelve
 from Configure import *
 import sys
+from tensorflow.python import debug as tf_debug
 
 
 class NPN:
@@ -99,24 +100,26 @@ class NPN:
             name="word_position_embeddings")
 
         # 全部的input
-        char_ids = tf.placeholder(tf.int32, [None, self.max_char_len])  # 0
-        word_ids = tf.placeholder(tf.int32, [None, self.max_word_len])  # 1
-        char_seq_len = tf.placeholder(tf.int32, [None])  # 2
-        word_seq_len = tf.placeholder(tf.int32, [None])  # 3
+        char_ids = tf.placeholder(tf.int32, [None, self.max_char_len])
+        word_ids = tf.placeholder(tf.int32, [None, self.max_word_len])
+        char_seq_len = tf.placeholder(tf.int32, [None])
+        word_seq_len = tf.placeholder(tf.int32, [None])
+        char_anchor = tf.placeholder(tf.int32, [None])
+        word_anchor = tf.placeholder(tf.int32, [None])
 
         # 关注词周围的input截取
-        char_lex_ctx_ids = tf.placeholder(tf.int32, [None, self.char_win_size * 2 + 1])  # 4
-        word_lex_ctx_ids = tf.placeholder(tf.int32, [None, self.word_win_size * 2 + 1])  # 5
+        char_lex_ctx_ids = tf.placeholder(tf.int32, [None, self.char_win_size * 2 + 1])
+        word_lex_ctx_ids = tf.placeholder(tf.int32, [None, self.word_win_size * 2 + 1])
 
         # 全部的position input
-        char_position_ids = tf.placeholder(tf.int32, [None, self.max_char_len])  # 6
-        word_position_ids = tf.placeholder(tf.int32, [None, self.max_word_len])  # 7
+        char_position_ids = tf.placeholder(tf.int32, [None, self.max_char_len])
+        word_position_ids = tf.placeholder(tf.int32, [None, self.max_word_len])
 
-        positive_loss_indicator = tf.placeholder(tf.float32, [None])  # 8
+        positive_loss_indicator = tf.placeholder(tf.float32, [None])
 
-        reg_label_ids = tf.placeholder(tf.int32, [None])  # 9
-        cls_label_ids = tf.placeholder(tf.int32, [None])  # 10
-        is_train = tf.placeholder(tf.bool, [])  # 11
+        reg_label_ids = tf.placeholder(tf.int32, [None])
+        cls_label_ids = tf.placeholder(tf.int32, [None])
+        is_train = tf.placeholder(tf.bool, [])
 
         embed_char = self.embed(char_embeddings, char_ids)  # B*T*char_embedding_dim
         embed_word = self.embed(word_embeddings, word_ids)  # B*T*word_embedding_dim
@@ -138,30 +141,56 @@ class NPN:
 
         # 根据句子长度增加input mask层
         char_input_mask_layer = MaskLayer("char_input_mask")
-        char_input_mask_layer.set_extra_parameters({"mask_value": 0})
+        char_input_mask_layer.set_extra_parameters({"mask_value": 0, "mask_from_right": 0})
         masked_concat_char_embedding = char_input_mask_layer(concat_char_embedding, char_seq_len)
 
         word_input_mask_layer = MaskLayer("word_input_mask")
-        word_input_mask_layer.set_extra_parameters({"mask_value": 0})
+        word_input_mask_layer.set_extra_parameters({"mask_value": 0, "mask_from_right": 0})
         masked_concat_word_embedding = word_input_mask_layer(concat_word_embedding, word_seq_len)
 
-        # 对词向量维度做压缩成1维 char_feature_map_size个filter
-        char_conv_layer = Conv1DLayer("char_conv1d", self.char_feature_map_size)
-        char_feature_maps = tf.tanh(char_conv_layer(masked_concat_char_embedding))  # B*T*char_feature_map_size
+        # 增加DMCNN层
+        char_input_mask_layer_before = MaskLayer("char_anchor_mask_before")
+        char_input_mask_layer_before.set_extra_parameters({"mask_value": 0, "mask_from_right": 0})
+        masked_concat_char_embedding_before = char_input_mask_layer_before(masked_concat_char_embedding, char_anchor)
 
-        word_conv_layer = Conv1DLayer("word_conv1d", self.word_feature_map_size)
-        word_feature_maps = tf.tanh(word_conv_layer(masked_concat_word_embedding))  # B*T*word_feature_map_size
+        word_input_mask_layer_before = MaskLayer("word_anchor_mask_before")
+        word_input_mask_layer_before.set_extra_parameters({"mask_value": 0, "mask_from_right": 0})
+        masked_concat_word_embedding_before = word_input_mask_layer_before(masked_concat_word_embedding, word_anchor)
+
+        char_input_mask_layer_after = MaskLayer("char_anchor_mask_after")
+        char_input_mask_layer_after.set_extra_parameters({"mask_value": 0, "mask_from_right": 1})
+        masked_concat_char_embedding_after = char_input_mask_layer_after(masked_concat_char_embedding, char_anchor)
+
+        word_input_mask_layer_after = MaskLayer("word_anchor_mask_after")
+        word_input_mask_layer_after.set_extra_parameters({"mask_value": 0, "mask_from_right": 1})
+        masked_concat_word_embedding_after = word_input_mask_layer_after(masked_concat_word_embedding, word_anchor)
+
+        # 对词向量维度做压缩成1维 char_feature_map_size个filter
+        char_conv_layer_before = Conv1DLayer("char_conv1d_before", self.char_feature_map_size)
+        char_feature_maps_before = tf.tanh(char_conv_layer_before(masked_concat_char_embedding_before))  # B*T*char_feature_map_size
+
+        word_conv_layer_before = Conv1DLayer("word_conv1d_before", self.word_feature_map_size)
+        word_feature_maps_before = tf.tanh(word_conv_layer_before(masked_concat_word_embedding_before))  # B*T*word_feature_map_size
+
+        char_conv_layer_after = Conv1DLayer("char_conv1d_after", self.char_feature_map_size)
+        char_feature_maps_after = tf.tanh(char_conv_layer_after(masked_concat_char_embedding_after))  # B*T*char_feature_map_size
+
+        word_conv_layer_after = Conv1DLayer("word_conv1d_after", self.word_feature_map_size)
+        word_feature_maps_after = tf.tanh(word_conv_layer_after(masked_concat_word_embedding_after))  # B*T*word_feature_map_size
 
         # 对句子维度做maxpool
-        max_pooled_char_maps = tf.reduce_max(char_feature_maps, axis=1)  # B * char_feature_map_size
-        max_pooled_word_maps = tf.reduce_max(word_feature_maps, axis=1)  # B * word_feature_map_size
+        max_pooled_char_maps_before = tf.reduce_max(char_feature_maps_before, axis=1)  # B * char_feature_map_size
+        max_pooled_word_maps_before = tf.reduce_max(word_feature_maps_before, axis=1)  # B * word_feature_map_size
 
+        max_pooled_char_maps_after = tf.reduce_max(char_feature_maps_after, axis=1)  # B * char_feature_map_size
+        max_pooled_word_maps_after = tf.reduce_max(word_feature_maps_after, axis=1)  # B * word_feature_map_size
+
+        # 全连接层500维特征向量
         latent_char_dense_layer = DenseLayer("char_dense_layer", self.gate_vec_size)
         latent_word_dense_layer = DenseLayer("word_dense_layer", self.gate_vec_size)
 
-        # 全连接层500维特征向量
-        char_features = latent_char_dense_layer(tf.concat([max_pooled_char_maps, char_lexical_features], axis=1))
-        word_features = latent_word_dense_layer(tf.concat([max_pooled_word_maps, word_lexical_features], axis=1))
+        char_features = latent_char_dense_layer(tf.concat([max_pooled_char_maps_before, max_pooled_char_maps_after, char_lexical_features], axis=1))
+        word_features = latent_word_dense_layer(tf.concat([max_pooled_word_maps_before, max_pooled_word_maps_after, word_lexical_features], axis=1))
 
         # concat 词和字特征向量 增加gate层控制输出
         reg_gate_linear = DenseLayer("reg_gate_linear", self.gate_vec_size)
@@ -223,9 +252,11 @@ class NPN:
 
         self.placeholders['char_sents'] = char_ids
         self.placeholders['char_seq_len'] = char_seq_len
+        self.placeholders['char_anchor'] = char_anchor
         self.placeholders['char_ctx'] = char_lex_ctx_ids
         self.placeholders['word_sents'] = word_ids
         self.placeholders['word_seq_len'] = word_seq_len
+        self.placeholders['word_anchor'] = word_anchor
         self.placeholders['word_ctx'] = word_lex_ctx_ids
         self.placeholders['char_position'] = char_position_ids
         self.placeholders['word_position'] = word_position_ids
@@ -251,7 +282,9 @@ class NPN:
 
     def train_model(self):
         init = tf.global_variables_initializer()
-        sess = self.restore_tf_model(180)
+        sess = self.sess
+        #sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        #sess = self.restore_tf_model(1000)
 
         if self.epoch == 0:
             sess.run(init)
@@ -399,9 +432,6 @@ class NPN:
         self.train_data = EEData("train", self.configure)
         self.test_data = EEData("test", self.configure)
         self.dev_data = EEData("dev", self.configure)
-
-        word2cnt = self.train_data.get_word_to_cnt()
-        char2cnt = self.train_data.get_char_to_cnt()
 
         self.word2cnt = self.train_data.get_word_to_cnt()
         self.word2cnt = self.dev_data.get_word_to_cnt(self.word2cnt)

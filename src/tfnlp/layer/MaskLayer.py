@@ -15,9 +15,13 @@ class MaskLayer(Layer):
             rank = m.get_shape().ndims
             extra_ones = tf.ones(rank - 2, dtype=tf.int32)
             seq_len_mask = tf.reshape(seq_len_mask, tf.concat((tf.shape(seq_len_mask), extra_ones), 0))
-            if not self.mask_from_right:
+
+            if self.mask_from_right:
                 seq_len_mask = 1-seq_len_mask
-            return m * seq_len_mask - ((seq_len_mask - 1) * self.mask_value)
+
+            m_seq_masked =  m * seq_len_mask - ((seq_len_mask - 1) * self.mask_value)
+
+            return m_seq_masked
     
     def set_extra_parameters(self,parameters = None):
         self.mask_value = 0
@@ -32,14 +36,15 @@ class MaskLayer(Layer):
     
 if __name__ =="__main__":
 
-    a = tf.Variable([[[1.0,2],[3,4]],[[5,6],[7,8]]])
+    a = tf.Variable([[[1,2],[3,4]],[[5,6],[7,8]]])
     mask = MaskLayer("mask")
     seq_len = tf.placeholder(tf.int32,[None])
-    params = {"mask_from_right":False,"mask_value":-100}
+    trigger_index = tf.placeholder(tf.int32, [None])
+    params = {"mask_from_right":True,"mask_value":0}
     mask.set_extra_parameters(params)
     output = mask(a,seq_len)
     
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
-    print(sess.run(output,feed_dict ={seq_len:[1,3]}))
-    print(sess.run(output,feed_dict ={seq_len:[1,1]}))
+    print(sess.run([output],feed_dict ={seq_len:[1,2]}))
+    #print(sess.run(output,feed_dict ={seq_len:[1,1]}))

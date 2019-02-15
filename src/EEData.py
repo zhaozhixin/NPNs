@@ -132,10 +132,14 @@ class EEData:
                 char_ctx.append(self.char_sents_id[(doc_id,sent_id)][0][ctx_idx])
         batch['char_ctx'].append(char_ctx)
 
+
         batch['word_sents'].append(self.word_sents_id[(doc_id,sent_id)][0])
         batch['word_seq_len'].append(self.word_sents_id[(doc_id,sent_id)][1])
 
         corres_word_id = self.get_char_word(doc_id, sent_id, anchor)
+        batch['char_anchor'].append(anchor)
+        batch['word_anchor'].append(corres_word_id)
+
         word_ctx = []
         for ctx_idx in range(corres_word_id - self.word_win_size,corres_word_id + self.word_win_size +1):
             if ctx_idx <0 or ctx_idx >= self.max_word_len:
@@ -169,9 +173,11 @@ class EEData:
         batch['char_sents'] = []
         batch['char_seq_len'] = []
         batch['char_ctx'] = []
+        batch['char_anchor'] = []
         batch['word_sents'] = []
         batch['word_seq_len'] = []
         batch['word_ctx'] = []
+        batch['word_anchor'] = []
         batch['char_position'] = []
         batch['word_position'] = []
         batch['is_positive'] = []
@@ -232,9 +238,12 @@ class EEData:
         label2id_file = data_dir + "label2id.dat"
         self.load_label2id(label2id_file)
 
+        # 简单存为字典
         self.load_chars(char_file)
         self.load_words(word_file)
         self.load_golden(golden_file)
+
+        # 截断过长句子
         self.clip_sentence()
 
         if data_split =="train":
@@ -243,6 +252,7 @@ class EEData:
             self.trim_data()
 
     def load_label2id(self,file_name):
+        # label2id id2label label-id对应字典
         self.id2label = {}
         self.label2id = {}
         for line in open(file_name):
@@ -256,8 +266,6 @@ class EEData:
         for line in open(ids_file,encoding="utf-8"):
             line = line.strip().split("\t")
             if len(line) !=8:
-                #print line
-                #print len(line)
                 continue
             doc_id,sent_id,begin_char_id,offset,length,train_label,_,_ = line
             sent_id = int(sent_id)
